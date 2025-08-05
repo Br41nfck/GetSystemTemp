@@ -1,9 +1,9 @@
 using LibreHardwareMonitor.Hardware;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
-using Timer = System.Threading.Timer;
 
 namespace GetSystemTemp
 {
@@ -28,7 +28,7 @@ namespace GetSystemTemp
 
 
         static NotifyIcon trayIcon = null!;
-        static Timer logTimer = null!;
+        static System.Threading.Timer logTimer = null!;
 
         [STAThread]
         static void Main()
@@ -58,11 +58,12 @@ namespace GetSystemTemp
             trayIcon.ContextMenuStrip = contextMenu;
 
             // Таймер логирования
-            logTimer = new Timer(_ => ReportSystemInfo(), null, 0, 5000);
+            logTimer = new System.Threading.Timer(_ => ReportSystemInfo(), null, 0, 5000);
 
             Application.Run();
         }
 
+        [UnconditionalSuppressMessage("SingleFile", "IL3000:Avoid accessing Assembly file path when publishing as a single file", Justification = "<Pending>")]
         static readonly string exePath = Environment.ProcessPath ?? Assembly.GetExecutingAssembly().Location;
         static readonly string exeDir = Path.GetDirectoryName(exePath)!;
         static readonly string logPath = Path.Combine(exeDir, "temps.log");
