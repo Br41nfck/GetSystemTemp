@@ -1,8 +1,6 @@
 using LibreHardwareMonitor.Hardware;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Net;
-using System.Net.Sockets;
 using System.Reflection;
 
 namespace GetSystemTemp
@@ -68,36 +66,6 @@ namespace GetSystemTemp
         static readonly string exeDir = Path.GetDirectoryName(exePath)!;
         static readonly string logPath = Path.Combine(exeDir, "temps.log");
 
-        public static DateTime GetMoscowTime()
-        {
-            const string RuNTPServer = "0.ru.pool.ntp.org"; // https://www.ntppool.org/ru/zone/ru
-
-            byte[] ntpData = new byte[48];
-            ntpData[0] = 0x1B;
-
-            var addresses = Dns.GetHostEntry(RuNTPServer).AddressList;
-            var ipEndPoint = new IPEndPoint(addresses[0], 123);
-
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            socket.Connect(ipEndPoint);
-            socket.Send(ntpData);
-            socket.ReceiveTimeout = 3000;
-            socket.Receive(ntpData);
-            socket.Close();
-
-            const byte serverReplyTime = 40;
-            ulong intPart = BitConverter.ToUInt32(ntpData, serverReplyTime);
-            ulong fractPart = BitConverter.ToUInt32(ntpData, serverReplyTime + 4);
-
-            intPart = SwapEndianness(intPart);
-            fractPart = SwapEndianness(fractPart);
-
-            var milliseconds = (intPart * 1000) + ((fractPart * 1000) / 0x100000000L);
-            var networkDateTime = new DateTime(1900, 1, 1).AddMilliseconds((long)milliseconds);
-
-            // Московское время — UTC+3, без учёта перехода на летнее
-            return TimeZoneInfo.ConvertTimeFromUtc(networkDateTime, TimeZoneInfo.FindSystemTimeZoneById("Russian Standard Time"));
-        }
 
         private static uint SwapEndianness(ulong x)
         {
@@ -144,91 +112,79 @@ namespace GetSystemTemp
 
         static void ReportSystemInfo()
         {
-            cpuTemps.Clear();
-            cpuPowers.Clear();
-            gpuTemps.Clear();
-            gpuPowers.Clear();
-            gpuCoreFrequencies.Clear();
-            gpuMemoryFrequencies.Clear();
-
-            foreach (var hardware in c.Hardware)
+            try
             {
-                hardware.Update();
+                cpuTemps.Clear();
+                cpuPowers.Clear();
+                gpuTemps.Clear();
+                gpuPowers.Clear();
+                gpuCoreFrequencies.Clear();
+                gpuMemoryFrequencies.Clear();
 
-                if (hardware.HardwareType == HardwareType.Cpu)
+                foreach (var hardware in c.Hardware)
                 {
+                    hardware.Update();
+
                     foreach (var sensor in hardware.Sensors)
                     {
-                        if (sensor.SensorType == SensorType.Temperature &&
-                            (sensor.Name.Contains("CPU Package") || sensor.Name.Contains("Tctl") || sensor.Name.Contains("Tdie")))
+                        try
                         {
-                            if (sensor.Value is float val)
-                                cpuTemps.Add(val);
-                        }
+                            if (sensor.Value is not float val || float.IsNaN(val))
+                                continue;
 
-                        if (sensor.SensorType == SensorType.Power &&
-                            (sensor.Name.Contains("CPU Package") || sensor.Name.Contains("Package")))
-                        {
-                            if (sensor.Value is float val)
-                                cpuPowers.Add(val);
-                        }
-                    }
-                }
-
-                if (hardware.HardwareType == HardwareType.GpuAmd ||
-                    hardware.HardwareType == HardwareType.GpuNvidia ||
-                    hardware.HardwareType == HardwareType.GpuIntel)
-                {
-                    foreach (var sensor in hardware.Sensors)
-                    {
-                        if (sensor.SensorType == SensorType.Temperature &&
-                            (sensor.Name.Contains("GPU Hot Spot") || sensor.Name.Contains("GPU Core")))
-                        {
-                            if (sensor.Value is float val)
-                                gpuTemps.Add(val);
-                        }
-
-                        if (sensor.SensorType == SensorType.Power &&
-                            (sensor.Name.Contains("GPU Package") || sensor.Name.Contains("GPU Power") || sensor.Name.Contains("Total")))
-                        {
-                            if (sensor.Value is float val)
-                                gpuPowers.Add(val);
-                        }
-
-                        if (sensor.SensorType == SensorType.Voltage &&
-                            (sensor.Name.Contains("GPU Core") || sensor.Name.Contains("VDD")))
-                        {
-                            if (sensor.Value is float val)
-                                gpuPowers.Add(val); // fallback
-                        }
-
-                        if (sensor.SensorType == SensorType.Clock)
-                        {
-                            float? value = sensor.Value;
-                            if (value is float v)
+                            switch (sensor.SensorType)
                             {
-                                if (sensor.Name.Contains("GPU Core"))
-                                    gpuCoreFrequencies.Add(v);
-                                else if (sensor.Name.Contains("GPU Memory"))
-                                    gpuMemoryFrequencies.Add(v);
+                                case SensorType.Temperature:
+                                    if (hardware.HardwareType == HardwareType.Cpu && (sensor.Name.Contains("CPU Package") || sensor.Name.Contains("Tctl") || sensor.Name.Contains("Tdie")))
+                                        cpuTemps.Add(val);
+                                    if ((hardware.HardwareType == HardwareType.GpuAmd || hardware.HardwareType == HardwareType.GpuNvidia || hardware.HardwareType == HardwareType.GpuIntel) &&
+                                        (sensor.Name.Contains("GPU Hot Spot") || sensor.Name.Contains("GPU Core")))
+                                        gpuTemps.Add(val);
+                                    break;
+
+                                case SensorType.Power:
+                                    if (hardware.HardwareType == HardwareType.Cpu && (sensor.Name.Contains("CPU Package") || sensor.Name.Contains("Package")))
+                                        cpuPowers.Add(val);
+                                    if ((hardware.HardwareType == HardwareType.GpuAmd || hardware.HardwareType == HardwareType.GpuNvidia || hardware.HardwareType == HardwareType.GpuIntel) &&
+                                        (sensor.Name.Contains("GPU Package") || sensor.Name.Contains("GPU Power") || sensor.Name.Contains("Total")))
+                                        gpuPowers.Add(val);
+                                    break;
+
+                                case SensorType.Voltage:
+                                    if ((hardware.HardwareType == HardwareType.GpuAmd || hardware.HardwareType == HardwareType.GpuNvidia || hardware.HardwareType == HardwareType.GpuIntel) &&
+                                        (sensor.Name.Contains("GPU Core") || sensor.Name.Contains("VDD")))
+                                        gpuPowers.Add(val);
+                                    break;
+
+                                case SensorType.Clock:
+                                    if (sensor.Name.Contains("GPU Core"))
+                                        gpuCoreFrequencies.Add(val);
+                                    else if (sensor.Name.Contains("GPU Memory"))
+                                        gpuMemoryFrequencies.Add(val);
+                                    break;
                             }
                         }
+                        catch { }
                     }
                 }
+
+                string timestr = DateTime.Now.ToString("HH:mm:ss");
+                string line = $"[{timestr}] | " +
+                              $"CPU Temp: {(cpuTemps.Any() ? cpuTemps.Average().ToString("F1") : "N/A")} °C | " +
+                              $"CPU Power: {(cpuPowers.Any() ? cpuPowers.Average().ToString("F1") : "N/A")} W | " +
+                              $"GPU Temp: {(gpuTemps.Any() ? gpuTemps.Average().ToString("F1") : "N/A")} °C | " +
+                              $"GPU Power: {(gpuPowers.Any() ? gpuPowers.Average().ToString("F1") : "N/A")} W | " +
+                              $"GPU Core Freq: {(gpuCoreFrequencies.Any() ? gpuCoreFrequencies.Average().ToString("F0") : "N/A")} MHz | " +
+                              $"GPU Mem Freq: {(gpuMemoryFrequencies.Any() ? gpuMemoryFrequencies.Average().ToString("F0") : "N/A")} MHz";
+
+                File.AppendAllText(logPath, line + Environment.NewLine);
             }
-
-            // Формируем строки из полученных значений
-            string cpuTempStr = cpuTemps.Count > 0 ? $"CPU Temp: {cpuTemps.Average():F1} °C" : "CPU Temp: N/A";
-            string cpuPowerStr = cpuPowers.Count > 0 ? $"CPU Power: {cpuPowers.Average():F1} W" : "CPU Power: N/A";
-            string gpuTempStr = gpuTemps.Count > 0 ? $"GPU Temp: {gpuTemps.Average():F1} °C" : "GPU Temp: N/A";
-            string gpuPowerStr = gpuPowers.Count > 0 ? $"GPU Power: {gpuPowers.Average():F1} W" : "GPU Power: N/A";
-            string gpuCoreFreqStr = gpuCoreFrequencies.Count > 0 ? $"GPU Core Freq: {gpuCoreFrequencies.Average():F0} MHz" : "GPU Core Freq: N/A";
-            string gpuMemFreqStr = gpuMemoryFrequencies.Count > 0 ? $"GPU Mem Freq: {gpuMemoryFrequencies.Average():F0} MHz" : "GPU Mem Freq: N/A";
-
-            string timestr = GetMoscowTime().ToString("dd-MM-yyyy HH:mm:ss");
-            string line = $"[{timestr}] | {cpuTempStr} | {cpuPowerStr} | {gpuTempStr} | {gpuPowerStr} | {gpuCoreFreqStr} | {gpuMemFreqStr}";
-            File.AppendAllText(logPath, line + Environment.NewLine);
+            catch (Exception ex)
+            {
+                File.AppendAllText("error.log", $"[{DateTime.Now}] Ошибка в ReportSystemInfo: {ex}\n");
+            }
         }
+
 
     }
 }
