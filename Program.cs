@@ -384,7 +384,7 @@ static partial class Program
                 }
             }
 
-            string timestr = DateTime.Now.ToString("HH:mm:ss");
+            string timestr = DateTime.Now.ToString("dd-MM-yyyy HH:mm:ss");
             List<string> logLines = [];
 
             if (!legendWritten && gpuLegend.Count != 0)
