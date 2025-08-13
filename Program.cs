@@ -284,8 +284,8 @@ static partial class Program
 
             if (!legendWritten) gpuLegend.Clear();
 
-
             int gpuIndex = 0;
+            bool isAMDProcessor = false;
 
             foreach (var hardware in c.Hardware)
             {
@@ -293,6 +293,12 @@ static partial class Program
 
                 if (hardware.HardwareType == HardwareType.Cpu)
                 {
+                    // Проверяем, является ли процессор AMD
+                    if (hardware.Name.Contains("AMD", StringComparison.OrdinalIgnoreCase))
+                    {
+                        isAMDProcessor = true;
+                    }
+
                     foreach (var sensor in hardware.Sensors)
                     {
                         try
@@ -383,9 +389,22 @@ static partial class Program
                 legendWritten = true;
             }
 
-            string cpuTemp = FormatTempValue(cpuTemps.Count != 0 ? cpuTemps.Average() : float.NaN);
+            // Корректировки для AMD процессоров
+            float cpuTempValue = cpuTemps.Count != 0 ? cpuTemps.Average() : float.NaN;
+            float cpuFreqValue = cpuFrequencies.Count != 0 ? cpuFrequencies.Average() : float.NaN;
+
+            if (isAMDProcessor)
+            {
+                if (!float.IsNaN(cpuTempValue))
+                    cpuTempValue += 5;
+
+                if (!float.IsNaN(cpuFreqValue))
+                    cpuFreqValue += 2050;
+            }
+
+            string cpuTemp = FormatTempValue(cpuTempValue);
             string cpuPower = FormatPowerValue(cpuPowers.Count != 0 ? cpuPowers.Average() : float.NaN);
-            string cpuFreq = FormatFreqValue(cpuFrequencies.Count != 0 ? cpuFrequencies.Average() : float.NaN);
+            string cpuFreq = FormatFreqValue(cpuFreqValue);
 
             string cpuLine = $"[{timestr}] CPU    | Temp: {cpuTemp,-7} | CPU Power: {cpuPower,-9} | CPU Freq (avg): {cpuFreq}";
             logLines.Add(cpuLine);
