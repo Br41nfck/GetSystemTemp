@@ -1,5 +1,7 @@
-// Утилита для логирования температуры и потребляемой мощности процессора и видеокарты в консоль или файл
+// РЈС‚РёР»РёС‚Р° РґР»СЏ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ С‚РµРјРїРµСЂР°С‚СѓСЂС‹ Рё РїРѕС‚СЂРµР±Р»СЏРµРјРѕР№ РјРѕС‰РЅРѕСЃС‚Рё РїСЂРѕС†РµСЃСЃРѕСЂР° Рё РІРёРґРµРѕРєР°СЂС‚С‹ РІ РєРѕРЅСЃРѕР»СЊ РёР»Рё С„Р°Р№Р»
 // Utility for logging the temperature and power consumption of the processor and video card to the console or file
+
+// Р—Р°РїСѓСЃРєР°С‚СЊ СЃ РїСЂР°РІР°РјРё Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°! | Run as Admin!
 
 // Libraries
 using LibreHardwareMonitor.Hardware; // Check: https://www.nuget.org/packages/LibreHardwareMonitorLib/0.9.5-pre384
@@ -7,6 +9,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace GetSystemTemp;
 
@@ -34,19 +37,26 @@ static partial class Program
     static NotifyIcon trayIcon = null!;
     static System.Threading.Timer logTimer = null!;
 
-    // Режим логирования | Logging mode
+    // Р РµР¶РёРј Р»РѕРіРёСЂРѕРІР°РЅРёСЏ | Logging mode
     static LoggingMode currentLoggingMode = LoggingMode.File;
 
-    // Флаг для отслеживания состояния консоли | Flag for monitoring console state
+    // Р¤Р»Р°Рі РґР»СЏ РѕС‚СЃР»РµР¶РёРІР°РЅРёСЏ СЃРѕСЃС‚РѕСЏРЅРёСЏ РєРѕРЅСЃРѕР»Рё | Flag for monitoring console state
     static bool consoleAllocated = false;
+
+    // РњР°СЃСЃРёРІС‹ РїСЂРѕС†РµСЃСЃРѕРІ РґР»СЏ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ | Arrays of processes for logging
+    static readonly string[] CpuProcesses = ["<process_name_1>", "<process_name_2>", "<process_name_3>", "<process_name_4>", "<process_name_5>", "<process_name_6>"];
+    static readonly string[] GpuProcesses = ["<process_name_1>", "<process_name_2>", "<process_name_3>", "<process_name_4>"];
+    static readonly string[] RamProcesses = ["<process_name_4>", "<process_name_6>"];
 
     [STAThread]
     static void Main(string[] args)
     {
-        // Проверяем аргументы командной строки | Check command-line args
+        // РџСЂРѕРІРµСЂСЏРµРј Р°СЂРіСѓРјРµРЅС‚С‹ РєРѕРјР°РЅРґРЅРѕР№ СЃС‚СЂРѕРєРё | Check command-line args
         ParseCommandLineArgs(args);
 
         c.Open();
+
+        ShowFanRpms(c);
 
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -56,35 +66,52 @@ static partial class Program
             Icon = new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico")),
             Visible = true,
             // EN: Text = "AutoTest Temps"
-            Text = "AutoTest Температуры"
+            Text = "AutoTest РўРµРјРїРµСЂР°С‚СѓСЂС‹"
         };
         // EN: trayIcon.ShowBalloonTip(3000, "AutoTest", "Temperature monitoring has been started", ToolTipIcon.Info);
-        trayIcon.ShowBalloonTip(3000, "AutoTest", "Мониторинг температур запущен", ToolTipIcon.Info);
+        trayIcon.ShowBalloonTip(3000, "AutoTest", "РњРѕРЅРёС‚РѕСЂРёРЅРі С‚РµРјРїРµСЂР°С‚СѓСЂ Р·Р°РїСѓС‰РµРЅ", ToolTipIcon.Info);
 
         var contextMenu = new ContextMenuStrip();
         // EN: contextMenu.Items.Add("Open Log", null, (_, _) => OpenLog());
         // EN: contextMenu.Items.Add("Logging mode", null, (sender, e) => { }); // Empty Handler
         // EN: contextMenu.Items.Add("Exit", null, (_, _) => Exit());
 
-        contextMenu.Items.Add("Открыть лог", null, (_, _) => OpenLog());
-        contextMenu.Items.Add("Режим логирования", null, (sender, e) => { }); // Пустой обработчик
-        contextMenu.Items.Add("Выход", null, (_, _) => Exit());
+        contextMenu.Items.Add("РћС‚РєСЂС‹С‚СЊ Р»РѕРі", null, (_, _) => OpenLog());
+        contextMenu.Items.Add("Р РµР¶РёРј Р»РѕРіРёСЂРѕРІР°РЅРёСЏ", null, (sender, e) => { }); // РџСѓСЃС‚РѕР№ РѕР±СЂР°Р±РѕС‚С‡РёРє
+        contextMenu.Items.Add("Р’С‹С…РѕРґ", null, (_, _) => Exit());
 
         trayIcon.ContextMenuStrip = contextMenu;
 
-        // Создаем подменю для режимов логирования | Creating submenu for logging modes
+        // РЎРѕР·РґР°РµРј РїРѕРґРјРµРЅСЋ РґР»СЏ СЂРµР¶РёРјРѕРІ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ | Creating submenu for logging modes
         CreateLoggingModeMenu();
 
-        // Если выбран режим с консолью, открываем консоль  | If switch to "In Console", open the console
+        // Р•СЃР»Рё РІС‹Р±СЂР°РЅ СЂРµР¶РёРј СЃ РєРѕРЅСЃРѕР»СЊСЋ, РѕС‚РєСЂС‹РІР°РµРј РєРѕРЅСЃРѕР»СЊ  | If switch to "In Console", open the console
         if (currentLoggingMode == LoggingMode.Console || currentLoggingMode == LoggingMode.Both)
         {
             OpenConsole();
         }
 
-        // Таймер логирования | Logging timer
+        // РўР°Р№РјРµСЂ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ | Logging timer
         logTimer = new System.Threading.Timer(_ => ReportSystemInfo(), null, 0, 5000);
 
         Application.Run();
+    }
+
+    static bool IsProcessRunning(params string[] processNames)
+    {
+        var processes = Process.GetProcesses();
+        return processes.Any(p =>
+        {
+            try
+            {
+                return processNames.Any(name =>
+                    p.ProcessName.Contains(name, StringComparison.OrdinalIgnoreCase));
+            }
+            catch
+            {
+                return false;
+            }
+        });
     }
 
     static void ParseCommandLineArgs(string[] args)
@@ -107,29 +134,29 @@ static partial class Program
         var contextMenu = trayIcon.ContextMenuStrip;
         if (contextMenu == null) return;
 
-        // Находим пункт "Режим логирования" | Found "Logging mode"
+        // РќР°С…РѕРґРёРј РїСѓРЅРєС‚ "Р РµР¶РёРј Р»РѕРіРёСЂРѕРІР°РЅРёСЏ" | Found "Logging mode"
         var loggingMenuItem = contextMenu.Items
             .OfType<ToolStripMenuItem>()
             // EN: .FirstOrDefault(item => item.Text == "Logging mode");
-            .FirstOrDefault(item => item.Text == "Режим логирования");
+            .FirstOrDefault(item => item.Text == "Р РµР¶РёРј Р»РѕРіРёСЂРѕРІР°РЅРёСЏ");
 
         if (loggingMenuItem == null) return;
 
-        // Создаем подменю | Create submenu
+        // РЎРѕР·РґР°РµРј РїРѕРґРјРµРЅСЋ | Create submenu
         // EN: var fileItem = new ToolStripMenuItem("To File")
-        var fileItem = new ToolStripMenuItem("В файл")
+        var fileItem = new ToolStripMenuItem("Р’ С„Р°Р№Р»")
         {
             Checked = currentLoggingMode == LoggingMode.File
         };
         fileItem.Click += (_, _) => SetLoggingMode(LoggingMode.File);
         // EN: var consoleItem = new ToolStripMenuItem("To Console")
-        var consoleItem = new ToolStripMenuItem("В консоль")
+        var consoleItem = new ToolStripMenuItem("Р’ РєРѕРЅСЃРѕР»СЊ")
         {
             Checked = currentLoggingMode == LoggingMode.Console
         };
         consoleItem.Click += (_, _) => SetLoggingMode(LoggingMode.Console);
         // EN:  var bothItem = new ToolStripMenuItem("Both")
-        var bothItem = new ToolStripMenuItem("В консоль и файл")
+        var bothItem = new ToolStripMenuItem("Р’ РєРѕРЅСЃРѕР»СЊ Рё С„Р°Р№Р»")
         {
             Checked = currentLoggingMode == LoggingMode.Both
         };
@@ -145,30 +172,30 @@ static partial class Program
         LoggingMode oldMode = currentLoggingMode;
         currentLoggingMode = mode;
 
-        // Обновляем галочки в меню | Update checks in logging menu
+        // РћР±РЅРѕРІР»СЏРµРј РіР°Р»РѕС‡РєРё РІ РјРµРЅСЋ | Update checks in logging menu
         UpdateLoggingMenuChecks();
 
-        // Если переключаемся на режим с консолью, открываем консоль | Else switch to "In Console", open the console
+        // Р•СЃР»Рё РїРµСЂРµРєР»СЋС‡Р°РµРјСЃСЏ РЅР° СЂРµР¶РёРј СЃ РєРѕРЅСЃРѕР»СЊСЋ, РѕС‚РєСЂС‹РІР°РµРј РєРѕРЅСЃРѕР»СЊ | Else switch to "In Console", open the console
         if ((mode == LoggingMode.Console || mode == LoggingMode.Both) && (oldMode == LoggingMode.File)) OpenConsole();
 
-        // Если переключаемся на режим "В файл", закрываем консоль | Else switch to "In file", close the console
+        // Р•СЃР»Рё РїРµСЂРµРєР»СЋС‡Р°РµРјСЃСЏ РЅР° СЂРµР¶РёРј "Р’ С„Р°Р№Р»", Р·Р°РєСЂС‹РІР°РµРј РєРѕРЅСЃРѕР»СЊ | Else switch to "In file", close the console
         else if (mode == LoggingMode.File && (oldMode == LoggingMode.Console || oldMode == LoggingMode.Both)) CloseConsole();
         // EN: trayIcon.ShowBalloonTip(2000, "AutoTest", $"Logging mode changed to: {GetModeDescription(mode)}", ToolTipIcon.Info);
-        trayIcon.ShowBalloonTip(2000, "AutoTest", $"Режим логирования изменен на: {GetModeDescription(mode)}", ToolTipIcon.Info);
+        trayIcon.ShowBalloonTip(2000, "AutoTest", $"Р РµР¶РёРј Р»РѕРіРёСЂРѕРІР°РЅРёСЏ РёР·РјРµРЅРµРЅ РЅР°: {GetModeDescription(mode)}", ToolTipIcon.Info);
     }
 
     static void OpenConsole()
     {
         try
         {
-            // Пытаемся открыть консоль | Try open the console
-            if (!AttachConsole(-1)) // -1 означает родительский процесс | -1 means parent process
+            // РџС‹С‚Р°РµРјСЃСЏ РѕС‚РєСЂС‹С‚СЊ РєРѕРЅСЃРѕР»СЊ | Try open the console
+            if (!AttachConsole(-1)) // -1 РѕР·РЅР°С‡Р°РµС‚ СЂРѕРґРёС‚РµР»СЊСЃРєРёР№ РїСЂРѕС†РµСЃСЃ | -1 means parent process
             {
-                // Если не удалось присоединиться, создаем новую консоль | If cannot attach to console, create new one
+                // Р•СЃР»Рё РЅРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёСЃРѕРµРґРёРЅРёС‚СЊСЃСЏ, СЃРѕР·РґР°РµРј РЅРѕРІСѓСЋ РєРѕРЅСЃРѕР»СЊ | If cannot attach to console, create new one
                 if (AllocConsole())
                 {
                     consoleAllocated = true;
-                    // Немного ждем, чтобы консоль инициализировалась | A little wait for initialization
+                    // РќРµРјРЅРѕРіРѕ Р¶РґРµРј, С‡С‚РѕР±С‹ РєРѕРЅСЃРѕР»СЊ РёРЅРёС†РёР°Р»РёР·РёСЂРѕРІР°Р»Р°СЃСЊ | A little wait for initialization
                     Thread.Sleep(100);
                 }
             }
@@ -179,9 +206,9 @@ static partial class Program
         }
         catch (Exception ex)
         {
-            // В случае ошибки показываем уведомление | Show notification in tray
+            // Р’ СЃР»СѓС‡Р°Рµ РѕС€РёР±РєРё РїРѕРєР°Р·С‹РІР°РµРј СѓРІРµРґРѕРјР»РµРЅРёРµ | Show notification in tray
             // EN: trayIcon.ShowBalloonTip(3000, "AutoTest", $"Error opening console: {ex.Message}", ToolTipIcon.Warning);
-            trayIcon.ShowBalloonTip(3000, "AutoTest", $"Ошибка открытия консоли: {ex.Message}", ToolTipIcon.Warning);
+            trayIcon.ShowBalloonTip(3000, "AutoTest", $"РћС€РёР±РєР° РѕС‚РєСЂС‹С‚РёСЏ РєРѕРЅСЃРѕР»Рё: {ex.Message}", ToolTipIcon.Warning);
         }
     }
 
@@ -198,7 +225,7 @@ static partial class Program
         catch (Exception ex)
         {
             // EN: trayIcon.ShowBalloonTip(3000, "AutoTest", $"Error closing console: {ex.Message}", ToolTipIcon.Warning);
-            trayIcon.ShowBalloonTip(3000, "AutoTest", $"Ошибка закрытия консоли: {ex.Message}", ToolTipIcon.Warning);
+            trayIcon.ShowBalloonTip(3000, "AutoTest", $"РћС€РёР±РєР° Р·Р°РєСЂС‹С‚РёСЏ РєРѕРЅСЃРѕР»Рё: {ex.Message}", ToolTipIcon.Warning);
         }
     }
 
@@ -207,7 +234,7 @@ static partial class Program
         ContextMenuStrip? contextMenu = trayIcon.ContextMenuStrip;
         if (contextMenu == null) return;
         // EN: ToolStripMenuItem? loggingMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>().FirstOrDefault(item => item.Text == "Logging mode");
-        ToolStripMenuItem? loggingMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>().FirstOrDefault(item => item.Text == "Режим логирования");
+        ToolStripMenuItem? loggingMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>().FirstOrDefault(item => item.Text == "Р РµР¶РёРј Р»РѕРіРёСЂРѕРІР°РЅРёСЏ");
 
         if (loggingMenuItem?.DropDownItems != null)
         {
@@ -235,17 +262,17 @@ static partial class Program
     {
         return mode switch
         {
-            LoggingMode.File => "В файл", // "To File"
-            LoggingMode.Console => "В консоль", // "To console"
-            LoggingMode.Both => "В консоль и файл", // "Both"
-            _ => "В файл" // "To File"
+            LoggingMode.File => "Р’ С„Р°Р№Р»", // "To File"
+            LoggingMode.Console => "Р’ РєРѕРЅСЃРѕР»СЊ", // "To console"
+            LoggingMode.Both => "Р’ РєРѕРЅСЃРѕР»СЊ Рё С„Р°Р№Р»", // "Both"
+            _ => "Р’ С„Р°Р№Р»" // "To File"
         };
     }
 
     [UnconditionalSuppressMessage("SingleFile", "IL3000:Avoid accessing Assembly file path when publishing as a single file", Justification = "<Pending>")]
     static readonly string exePath = Environment.ProcessPath ?? Assembly.GetExecutingAssembly().Location;
     static readonly string exeDir = Path.GetDirectoryName(exePath)!;
-    static readonly string logPath = Path.Combine(exeDir, "temps.log"); // Файл для сохранения логов | Save Log File
+    static readonly string logPath = Path.Combine(exeDir, "temps.log"); // Р¤Р°Р№Р» РґР»СЏ СЃРѕС…СЂР°РЅРµРЅРёСЏ Р»РѕРіРѕРІ | Save Log File
 
     static void OpenLog()
     {
@@ -263,18 +290,18 @@ static partial class Program
         catch (Exception ex)
         {
             // EN: MessageBox.Show($"Error opening log: {ex.Message}");
-            MessageBox.Show($"Ошибка при открытии лога: {ex.Message}");
+            MessageBox.Show($"РћС€РёР±РєР° РїСЂРё РѕС‚РєСЂС‹С‚РёРё Р»РѕРіР°: {ex.Message}");
         }
     }
 
     static void Exit()
     {
         // EN: trayIcon.ShowBalloonTip(3000, "AutoTest", "Temperature monitoring has been stopped", ToolTipIcon.Info);
-        trayIcon.ShowBalloonTip(3000, "AutoTest", "Мониторинг температур остановлен", ToolTipIcon.Info);
+        trayIcon.ShowBalloonTip(3000, "AutoTest", "РњРѕРЅРёС‚РѕСЂРёРЅРі С‚РµРјРїРµСЂР°С‚СѓСЂ РѕСЃС‚Р°РЅРѕРІР»РµРЅ", ToolTipIcon.Info);
         trayIcon.Visible = false;
         logTimer.Dispose();
 
-        // Закрываем консоль при выходе, если она была открыта | Close the console on exit if it was open
+        // Р—Р°РєСЂС‹РІР°РµРј РєРѕРЅСЃРѕР»СЊ РїСЂРё РІС‹С…РѕРґРµ, РµСЃР»Рё РѕРЅР° Р±С‹Р»Р° РѕС‚РєСЂС‹С‚Р° | Close the console on exit if it was open
         if (consoleAllocated)
         {
             FreeConsole();
@@ -282,6 +309,46 @@ static partial class Program
         }
 
         Application.Exit();
+    }
+
+    static void ShowFanRpms(Computer c)
+    {
+        void UpdateHardware(IHardware hardware)
+        {
+            hardware.Update();
+            StringBuilder sb = new();
+
+            foreach (var sensor in hardware.Sensors)
+            {
+                if (sensor.SensorType == SensorType.Fan && sensor.Value.HasValue && sensor.Value > 0)
+                {
+                    sb.AppendLine($"{sensor.Name}: {sensor.Value:F0} RPM");
+                }
+            }
+
+            foreach (var sub in hardware.SubHardware)
+            {
+                UpdateHardware(sub);
+            }
+
+            // РџРѕРєР°Р·С‹РІР°РµРј РІСЃРµ РѕР±РѕСЂРѕС‚С‹ РґР»СЏ РІСЃРµС… РІРµСЂС‚СѓС€РµРє (CPU, GPU) | Show all RPMs for all fans (CPU, GPU)
+            if (sb.Length > 0)
+            {
+                try
+                {
+                    File.AppendAllText(logPath, $"[{DateTime.Now}] Fan RPMs:\n{sb}\n");
+                    MessageBox.Show(sb.ToString(), $"Р’РµРЅС‚РёР»СЏС‚РѕСЂС‹");
+					// EN: MessageBox.Show(sb.ToString(), $"Fans");
+                }
+                catch
+                { }
+            }
+        }
+
+        foreach (var hardware in c.Hardware)
+        {
+            UpdateHardware(hardware);
+        }
     }
 
     static void ReportSystemInfo()
@@ -296,8 +363,10 @@ static partial class Program
 
             if (!legendWritten) gpuLegend.Clear();
 
-            int gpuIndex = 0;
+            int gpuIndex = 1;
             bool isAMDProcessor = false;
+            float? memoryUsed = null;
+            float? memoryAvailable = null;
 
             foreach (var hardware in c.Hardware)
             {
@@ -305,7 +374,7 @@ static partial class Program
 
                 if (hardware.HardwareType == HardwareType.Cpu)
                 {
-                    // Проверяем, является ли процессор AMD | Check if the processor is AMD
+                    // РџСЂРѕРІРµСЂСЏРµРј, СЏРІР»СЏРµС‚СЃСЏ Р»Рё РїСЂРѕС†РµСЃСЃРѕСЂ AMD | Check if the processor is AMD
                     if (hardware.Name.Contains("AMD", StringComparison.OrdinalIgnoreCase))
                     {
                         isAMDProcessor = true;
@@ -344,9 +413,28 @@ static partial class Program
                         catch { }
                     }
                 }
-                else if (hardware.HardwareType == HardwareType.GpuNvidia ||
-                         hardware.HardwareType == HardwareType.GpuAmd ||
-                         hardware.HardwareType == HardwareType.GpuIntel)
+
+                else if (hardware.HardwareType == HardwareType.Memory)
+                {
+                    foreach (var sensor in hardware.Sensors)
+                    {
+                        try
+                        {
+                            if (sensor.Value is not float val || float.IsNaN(val)) continue;
+
+                            if (sensor.SensorType == SensorType.Data)
+                            {
+                                string name = sensor.Name.ToLower();
+                                if (name.Contains("used")) memoryUsed = val;
+                                else if (name.Contains("available")) memoryAvailable = val;
+                            }
+
+                        }
+                        catch { }
+
+                    }
+                }
+                else if (hardware.HardwareType == HardwareType.GpuNvidia || hardware.HardwareType == HardwareType.GpuAmd || hardware.HardwareType == HardwareType.GpuIntel)
                 {
                     if (!legendWritten)
                     {
@@ -368,7 +456,7 @@ static partial class Program
                             {
                                 case SensorType.Temperature:
                                     if (sensor.Name.Contains("GPU Hot Spot") || sensor.Name.Contains("GPU Core"))
-                                        gpuTempsWithNames.Add((currentGpuId, val + (float)3.6)); // Корректировка погрешностей для GPU | Correction of errors for GPU
+                                        gpuTempsWithNames.Add((currentGpuId, val + (float)6.7)); // РљРѕСЂСЂРµРєС‚РёСЂРѕРІРєР° РїРѕРіСЂРµС€РЅРѕСЃС‚РµР№ РґР»СЏ GPU | Correction of errors for GPU
                                     break;
 
                                 case SensorType.Power:
@@ -379,7 +467,6 @@ static partial class Program
                         }
                         catch { }
                     }
-
                     gpuIndex++;
                 }
             }
@@ -393,60 +480,110 @@ static partial class Program
                 foreach (var (id, fullName, isIntegrated) in gpuLegend)
                 {
                     // EN: string description = isIntegrated ? "intergated" : fullName;
-                    string description = isIntegrated ? "встроенная" : fullName;
+                    string description = isIntegrated ? "РІСЃС‚СЂРѕРµРЅРЅР°СЏ" : fullName;
                     legendEntries.Add($"{id} ({description}) - {fullName}");
                 }
                 // EN: logLines.Add("Designations: ");
-                logLines.Add("Обозначения: ");
+                logLines.Add("РћР±РѕР·РЅР°С‡РµРЅРёСЏ: ");
                 logLines.Add(string.Join(Environment.NewLine, legendEntries));
                 logLines.Add("\n");
                 legendWritten = true;
             }
 
-            // Корректировка погрешностей для процессоров AMD | Correction of errors for AMD processors
+            // РљРѕСЂСЂРµРєС‚РёСЂРѕРІРєР° РїРѕРіСЂРµС€РЅРѕСЃС‚РµР№ РґР»СЏ РїСЂРѕС†РµСЃСЃРѕСЂРѕРІ AMD | Correction of errors for AMD processors
             float cpuTempValue = cpuTemps.Count != 0 ? cpuTemps.Average() : float.NaN;
             float cpuFreqValue = cpuFrequencies.Count != 0 ? cpuFrequencies.Average() : float.NaN;
 
             if (isAMDProcessor)
             {
-                // Температура | Temperature
-                if (!float.IsNaN(cpuTempValue)) cpuTempValue += 6;
-                // Частота | Frequency
-                if (!float.IsNaN(cpuFreqValue)) cpuFreqValue += 2140;
+                // РўРµРјРїРµСЂР°С‚СѓСЂР° | Temperature
+                // if (!float.IsNaN(cpuTempValue)) cpuTempValue += 6;
+                // Р§Р°СЃС‚РѕС‚Р° | Frequency
+                if (!float.IsNaN(cpuFreqValue)) cpuFreqValue += 1350;
             }
 
-            string cpuTemp = FormatTempValue(cpuTempValue);
-            string cpuPower = FormatPowerValue(cpuPowers.Count != 0 ? cpuPowers.Average() : float.NaN);
-            string cpuFreq = FormatFreqValue(cpuFreqValue);
-
-            string cpuLine = $"[{timestr}] CPU    | Temp: {cpuTemp,-7} | CPU Power: {cpuPower,-9} | CPU Freq (avg): {cpuFreq}";
-            logLines.Add(cpuLine);
-
-            for (int i = 0; i < gpuLegend.Count; i++)
+            if (IsProcessRunning(CpuProcesses))
             {
-                var (id, fullName, isIntegrated) = gpuLegend[i];
-                var temps = gpuTempsWithNames.Where(x => x.name == id).Select(x => x.temp);
-                var powers = gpuPowersWithNames.Where(x => x.name == id).Select(x => x.power);
+                int cpuIndex = 1;
+                foreach (var hw in c.Hardware.Where(h => h.HardwareType == HardwareType.Cpu))
+                {
+                    hw.Update();
 
-                string gpuTemp = FormatTempValue(temps.Any() ? temps.Average() : float.NaN);
-                string gpuPower = FormatPowerValue(powers.Any() ? powers.Average() : float.NaN);
+                    var temps = hw.Sensors.Where(s => s.SensorType == SensorType.Temperature).Select(s => s.Value).Where(v => v.HasValue).Select(v => v!.Value).ToList();
+                    var powers = hw.Sensors.Where(s => s.SensorType == SensorType.Power).Select(s => s.Value).Where(v => v.HasValue).Select(v => v!.Value).ToList();
+                    var clocks = hw.Sensors.Where(s => s.SensorType == SensorType.Clock && s.Name.Contains("Core")).Select(s => s.Value).Where(v => v.HasValue).Select(v => v!.Value).ToList();
 
-                string gpuLine = $"[{timestr}] {id,-6} | Temp: {gpuTemp,-7} | Power: {gpuPower,-8}";
+                    float temp = temps.Count > 0 ? temps.Average() : float.NaN;
+                    float power = powers.Count > 0 ? powers.Average() : float.NaN;
+                    float freq = clocks.Count > 0 ? clocks.Average() : float.NaN;
 
-                logLines.Add(gpuLine);
+                    string cpuLine = $"[{timestr}] CPU#{cpuIndex} | Temp: {FormatTempValue(temp),-7} | Power: {FormatPowerValue(power),-9} | Avg Freq: {FormatFreqValue(freq)}";
+                    logLines.Add(cpuLine);
+
+                    cpuIndex++;
+                }
+            }
+
+            if (IsProcessRunning(RamProcesses))
+            {
+                if (IsProcessRunning(RamProcesses))
+                {
+                    if (memoryUsed.HasValue && memoryAvailable.HasValue)
+                    {
+                        float totalMemory = memoryUsed.Value + memoryAvailable.Value;
+                        float usedPercent = (memoryUsed.Value / totalMemory) * 100f;
+                        float freePercent = 100f - usedPercent;
+                        string ramLine = $"[{timestr}] RAM   | Used: {FormatRamValue(memoryUsed.Value)} ({usedPercent:F0}%) | Free: {FormatRamValue(memoryAvailable.Value)} ({freePercent:F0}%) | Total: {FormatRamValue(totalMemory)}";
+                        logLines.Add(ramLine);
+                    }
+                }
+            }
+
+            if (IsProcessRunning(GpuProcesses))
+            {
+                int logGpuIndex = 1; // РќР°С‡Р°Р»Рѕ РЅСѓРјРµСЂР°С†РёРё СЃ 1 РґР»СЏ Р»РѕРіР°
+
+                foreach (var hw in c.Hardware.Where(h =>
+                    h.HardwareType == HardwareType.GpuNvidia ||
+                    h.HardwareType == HardwareType.GpuAmd ||
+                    h.HardwareType == HardwareType.GpuIntel))
+                {
+                    hw.Update();
+
+                    float temp = hw.Sensors
+                        .Where(s => s.SensorType == SensorType.Temperature)
+                        .Select(s => s.Value)
+                        .Where(v => v.HasValue)
+                        .Select(v => v!.Value)
+                        .DefaultIfEmpty(float.NaN)
+                        .Average();
+
+                    float power = hw.Sensors
+                        .Where(s => s.SensorType == SensorType.Power)
+                        .Select(s => s.Value)
+                        .Where(v => v.HasValue)
+                        .Select(v => v!.Value)
+                        .DefaultIfEmpty(float.NaN)
+                        .Average();
+
+                    string gpuLine = $"[{timestr}] GPU#{logGpuIndex} | Temp: {FormatTempValue(temp),-7} | Power: {FormatPowerValue(power),-9}";
+                    logLines.Add(gpuLine);
+
+                    logGpuIndex++; // РЎР»РµРґСѓСЋС‰РёР№ GPU
+                }
             }
 
             logLines.Add("\n");
 
             string logEntry = string.Join(Environment.NewLine, logLines);
 
-            // Логируем в зависимости от выбранного режима | Logging depending on the selected mode
+            // Р›РѕРіРёСЂСѓРµРј РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РІС‹Р±СЂР°РЅРЅРѕРіРѕ СЂРµР¶РёРјР° | Logging depending on the selected mode
             LogOutput(logEntry);
         }
         catch (Exception ex)
         {
             // EN: string errorLine = $"[{DateTime.Now}] Error in ReportSystemInfo: {ex}\n";
-            string errorLine = $"[{DateTime.Now}] Ошибка в ReportSystemInfo: {ex}\n";
+            string errorLine = $"[{DateTime.Now}] РћС€РёР±РєР° РІ ReportSystemInfo: {ex}\n";
             LogOutput(errorLine, isError: true);
         }
     }
@@ -465,7 +602,7 @@ static partial class Program
                 }
                 else
                 {
-                    // Если консоль не открыта, выводим в файл как запасной вариант | If the console is not open, output to a file as a fallback
+                    // Р•СЃР»Рё РєРѕРЅСЃРѕР»СЊ РЅРµ РѕС‚РєСЂС‹С‚Р°, РІС‹РІРѕРґРёРј РІ С„Р°Р№Р» РєР°Рє Р·Р°РїР°СЃРЅРѕР№ РІР°СЂРёР°РЅС‚ | If the console is not open, output to a file as a fallback
                     try
                     {
                         File.AppendAllText(logPath, message);
@@ -481,17 +618,17 @@ static partial class Program
                 }
                 catch (Exception ex)
                 {
-                    // В случае ошибки записи в файл, выводим в консоль если она доступна | In case of an error writing to the file, output it to the console if it is available
+                    // Р’ СЃР»СѓС‡Р°Рµ РѕС€РёР±РєРё Р·Р°РїРёСЃРё РІ С„Р°Р№Р», РІС‹РІРѕРґРёРј РІ РєРѕРЅСЃРѕР»СЊ РµСЃР»Рё РѕРЅР° РґРѕСЃС‚СѓРїРЅР° | In case of an error writing to the file, output it to the console if it is available
                     if (consoleAllocated)
                     {
                         // EN: Console.Error.WriteLine($"Error writing to file: {ex.Message}");
-                        Console.Error.WriteLine($"Ошибка записи в файл: {ex.Message}");
+                        Console.Error.WriteLine($"РћС€РёР±РєР° Р·Р°РїРёСЃРё РІ С„Р°Р№Р»: {ex.Message}");
                     }
                 }
                 break;
 
             case LoggingMode.Both:
-                // Выводим в консоль если доступна | Output it to the console if it is available
+                // Р’С‹РІРѕРґРёРј РІ РєРѕРЅСЃРѕР»СЊ РµСЃР»Рё РґРѕСЃС‚СѓРїРЅР° | Output it to the console if it is available
                 if (consoleAllocated)
                 {
                     if (!isError)
@@ -500,7 +637,7 @@ static partial class Program
                         Console.Error.Write(message);
                 }
 
-                // Записываем в файл | Write to file
+                // Р—Р°РїРёСЃС‹РІР°РµРј РІ С„Р°Р№Р» | Write to file
                 try
                 {
                     File.AppendAllText(logPath, message);
@@ -510,7 +647,7 @@ static partial class Program
                     if (consoleAllocated)
                     {
                         // EN: Console.Error.WriteLine($"Error writing to file: {ex.Message}");
-                        Console.Error.WriteLine($"Ошибка записи в файл: {ex.Message}");
+                        Console.Error.WriteLine($"РћС€РёР±РєР° Р·Р°РїРёСЃРё РІ С„Р°Р№Р»: {ex.Message}");
                     }
                 }
                 break;
@@ -520,8 +657,8 @@ static partial class Program
     static string FormatTempValue(float value)
     {
         if (float.IsNaN(value))
-            return "N/A °C";
-        return $"{value:F1}".Replace(".", ",") + " °C";
+            return "N/A В°C";
+        return $"{value:F1}".Replace(".", ",") + " В°C";
     }
 
     static string FormatPowerValue(float value)
@@ -538,6 +675,13 @@ static partial class Program
         return $"{value:F0} MHz";
     }
 
+    static string FormatRamValue(float value)
+    {
+        if (float.IsNaN(value))
+            return "N/A MB";
+        return $"{value * 1024:F0} MB"; // GB to MB
+    }
+
     [LibraryImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool AllocConsole();
@@ -551,10 +695,10 @@ static partial class Program
     private static partial bool AttachConsole(int dwProcessId);
 }
 
-// Перечисление для режимов логирования | Enumeration for logging modes
+// РџРµСЂРµС‡РёСЃР»РµРЅРёРµ РґР»СЏ СЂРµР¶РёРјРѕРІ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ | Enumeration for logging modes
 enum LoggingMode
 {
-    File,    // Только в файл | File Only
-    Console, // Только в консоль | Console Only
-    Both     // В консоль и файл | Both
+    File,    // РўРѕР»СЊРєРѕ РІ С„Р°Р№Р» | File Only
+    Console, // РўРѕР»СЊРєРѕ РІ РєРѕРЅСЃРѕР»СЊ | Console Only
+    Both     // Р’ РєРѕРЅСЃРѕР»СЊ Рё С„Р°Р№Р» | Both
 }
