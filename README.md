@@ -3,6 +3,9 @@
 Gets the system temperature through sensors and writes it to a logfile. The app icon is hidden in the system tray.  
 Получает информацию через датчики и записывает в лог-файл. Иконка программы спрятана в трее.
 
+## ChangeLog
+[Список изменений](https://github.com/Br41nfck/GetSystemTemp/blob/main/Changelog.md)
+
 ## Requirements (Требования)
 
 - [LibreHardwareMonitorLib Version 0.9.5-pre437](https://www.nuget.org/packages/LibreHardwareMonitorLib/0.9.5-pre437)  
