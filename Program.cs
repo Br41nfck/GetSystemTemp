@@ -1,151 +1,17 @@
-﻿// Утилита для логирования температуры и потребляемой мощности процессора и видеокарты в консоль или файл
+// Утилита для логирования температуры и потребляемой мощности процессора и видеокарты в консоль или файл
 // Utility for logging the temperature and power consumption of the processor and video card to the console or file
 
 // Запускать с правами администратора! | Run as Admin!
 
 // Libraries
 using LibreHardwareMonitor.Hardware; // Check: https://www.nuget.org/packages/LibreHardwareMonitorLib/0.9.5-pre384
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 
 namespace GetSystemTemp;
-
-using System;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Windows.Forms;
-
-
-public static class MonitoringManager
-{
-    public static string? TargetProcessName { get; private set; }
-    public static string? TargetLogFile { get; private set; }
-
-    public static bool LogCpu { get; private set; }
-    public static bool LogGpu { get; private set; }
-    public static bool LogRam { get; private set; }
-
-    private static bool everRunning = false;
-    private static System.Threading.Timer? monitorTimer;
-
-    /// <summary>
-    /// Запуск мониторинга процесса
-    /// </summary>
-    public static void StartMonitoring(string processName, bool logCpu, bool logGpu, bool logRam)
-    {
-        if (string.IsNullOrWhiteSpace(processName))
-            throw new ArgumentException("Process name cannot be empty", nameof(processName));
-
-        TargetProcessName = processName;
-        LogCpu = logCpu;
-        LogGpu = logGpu;
-        LogRam = logRam;
-        everRunning = false;
-
-        // Лог-файл рядом с программой
-        string exeDir = Path.GetDirectoryName(Environment.ProcessPath!)!;
-        TargetLogFile = Path.Combine(exeDir, $"{SanitizeFileName(processName)}_temps.log");
-
-        try
-        {
-            File.WriteAllText(TargetLogFile,
-                $"[{DateTime.Now:dd.MM.yyyy HH:mm:ss}] Мониторинг запущен для {processName}{Environment.NewLine}");
-            MessageBox.Show($"Файл мониторинга создан: {TargetLogFile}", "Мониторинг");
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Ошибка при создании файла: {ex.Message}", "Ошибка");
-            return;
-        }
-
-        // Запуск таймера проверки процесса каждые 5 секунд
-        monitorTimer = new System.Threading.Timer(_ => MonitorProcess(), null, 0, 5000);
-    }
-
-    public static void StopMonitoring()
-    {
-        if (TargetLogFile != null)
-        {
-            try
-            {
-                File.AppendAllText(TargetLogFile, $"[{DateTime.Now:dd.MM.yyyy HH:mm:ss}] Мониторинг остановлен (процесс завершён){Environment.NewLine}");
-            }
-            catch { }
-        }
-
-        // 🟢 Сбрасываем
-        TargetProcessName = null;
-        TargetLogFile = null;
-
-        monitorTimer?.Dispose();
-        monitorTimer = null;
-
-        Program.ShowTrayMessage("Мониторинг остановлен", "GetSystemTemp", ToolTipIcon.Info);
-    }
-
-
-
-    public static void Log(string message)
-    {
-        if (TargetLogFile != null)
-        {
-            try
-            {
-                File.AppendAllText(TargetLogFile, message + Environment.NewLine);
-            }
-            catch { }
-        }
-    }
-
-
-    /// <summary>
-    /// Проверка процесса и логирование
-    /// </summary>
-    private static void MonitorProcess()
-    {
-        if (TargetProcessName == null) return;
-        bool isRunning = IsProcessRunning(TargetProcessName);
-        if (isRunning) everRunning = true;
-        else if (everRunning)
-        {
-            everRunning = false;
-            StopMonitoring();
-            monitorTimer?.Dispose();
-            monitorTimer = null;
-        }
-    }
-
-
-    /// <summary>
-    /// Проверка, запущен ли процесс
-    /// </summary>
-    public static bool IsProcessRunning(string processName)
-    {
-        if (string.IsNullOrWhiteSpace(processName))
-            return false;
-
-        string cleanName = processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-            ? processName[..^4]
-            : processName;
-
-        return Process.GetProcesses()
-            .Any(p => string.Equals(p.ProcessName, cleanName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// Убирает недопустимые символы из имени файла
-    /// </summary>
-    private static string SanitizeFileName(string name)
-    {
-        foreach (var c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
-        return name;
-    }
-}
-
 
 static partial class Program
 {
@@ -168,28 +34,8 @@ static partial class Program
     static bool legendWritten = false;
     static readonly List<(string id, string fullName, bool isIntegrated)> gpuLegend = [];
 
-    public static NotifyIcon trayIcon = null!;
-    public static System.Threading.Timer logTimer = null!;
-
-    static Form? processList;
-
-    static void ShowMonitoringForm()
-    {
-        if (processList == null || processList.IsDisposed) processList = new ProcessList();
-
-
-        processList.Show();
-        processList.WindowState = FormWindowState.Normal;
-        processList.BringToFront();
-    }
-
-
-
-    public static void StartLogTimer()
-    {
-        logTimer?.Dispose();
-        logTimer = new System.Threading.Timer(_ => ReportSystemInfo(), null, 0, 5000);
-    }
+    static NotifyIcon trayIcon = null!;
+    static System.Threading.Timer logTimer = null!;
 
     // Режим логирования | Logging mode
     static LoggingMode currentLoggingMode = LoggingMode.File;
@@ -198,19 +44,18 @@ static partial class Program
     static bool consoleAllocated = false;
 
     // Массивы процессов для логирования | Arrays of processes for logging
-    //static readonly string[] CpuProcesses = ["<process_name_1>", "<process_name_2>", "<process_name_3>", "<process_name_4>", "<process_name_5>", "<process_name_6>"];
-    //static readonly string[] GpuProcesses = ["<process_name_1>", "<process_name_2>", "<process_name_3>", "<process_name_4>"];
-    //static readonly string[] RamProcesses = ["<process_name_4>", "<process_name_6>"];
+    static readonly string[] CpuProcesses = ["<process_name_1>", "<process_name_2>", "<process_name_3>", "<process_name_4>", "<process_name_5>", "<process_name_6>"];
+    static readonly string[] GpuProcesses = ["<process_name_1>", "<process_name_2>", "<process_name_3>", "<process_name_4>"];
+    static readonly string[] RamProcesses = ["<process_name_4>", "<process_name_6>"];
+
 
     [STAThread]
-    static void Main(string[] args)
+    static void Main()
     {
-        // Проверяем аргументы командной строки | Check command-line args
-        ParseCommandLineArgs(args);
-
         c.Open();
 
-        ShowFanRpms(c);
+        // Асинхронный вызов ShowFanRpms
+        ShowFanRpmsAsync(c).GetAwaiter().GetResult();
 
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -219,59 +64,95 @@ static partial class Program
         {
             Icon = new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico")),
             Visible = true,
-            // EN: Text = "AutoTest Temps"
             Text = "AutoTest Температуры"
         };
-        // EN: trayIcon.ShowBalloonTip(3000, "AutoTest", "Temperature monitoring has been started", ToolTipIcon.Info);
         trayIcon.ShowBalloonTip(3000, "AutoTest", "Мониторинг температур запущен", ToolTipIcon.Info);
 
         var contextMenu = new ContextMenuStrip();
-        // EN: contextMenu.Items.Add("Open Log", null, (_, _) => OpenLog());
-        // EN: contextMenu.Items.Add("Logging mode", null, (sender, e) => { }); // Empty Handler
-        // EN: contextMenu.Items.Add("Exit", null, (_, _) => Exit());
-
         contextMenu.Items.Add("Открыть лог", null, (_, _) => OpenLog());
-        contextMenu.Items.Add("Режим логирования", null, (sender, e) => { }); // Пустой обработчик
+        contextMenu.Items.Add("Режим логирования", null, (sender, e) => { });
         contextMenu.Items.Add("Выход", null, (_, _) => Exit());
-        contextMenu.Items.Insert(0, new ToolStripMenuItem("Мониторинг процессов", null, (_, _) => ShowMonitoringForm()));
-
         trayIcon.ContextMenuStrip = contextMenu;
 
-        // Создаем подменю для режимов логирования | Creating submenu for logging modes
         CreateLoggingModeMenu();
 
-        // Если выбран режим с консолью, открываем консоль  | If switch to "In Console", open the console
         if (currentLoggingMode == LoggingMode.Console || currentLoggingMode == LoggingMode.Both) OpenConsole();
 
-
-        // Таймер логирования | Logging timer
         logTimer = new System.Threading.Timer(_ => ReportSystemInfo(), null, 0, 5000);
-
         Application.Run();
     }
 
-    public static void ShowTrayMessage(string title, string text, ToolTipIcon icon = ToolTipIcon.Info) => trayIcon?.ShowBalloonTip(3000, title, text, icon);
-
-    public static bool IsProcessRunning(string processName)
+    static async Task ShowFanRpmsAsync(Computer c)
     {
-        if (string.IsNullOrWhiteSpace(processName)) return false;
-        string cleanName = processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? processName[..^4] : processName;
-        return Process.GetProcesses().Any(p => string.Equals(p.ProcessName, cleanName, StringComparison.OrdinalIgnoreCase));
+        await Task.Run(() =>
+        {
+            StringBuilder sb = new();
+
+            void UpdateHardware(IHardware hardware)
+            {
+                hardware.Update();
+
+                foreach (var sensor in hardware.Sensors)
+                {
+                    if (sensor.SensorType == SensorType.Fan && sensor.Value.HasValue && sensor.Value > 0)
+                    {
+                        sb.AppendLine($"{sensor.Name}: {sensor.Value:F0} RPM");
+                    }
+                }
+
+                foreach (var sub in hardware.SubHardware)
+                {
+                    UpdateHardware(sub);
+                }
+            }
+
+            foreach (var hardware in c.Hardware)
+            {
+                UpdateHardware(hardware);
+            }
+
+            if (sb.Length > 0)
+            {
+                try
+                {
+                    File.AppendAllText(logPath, $"[{DateTime.Now}] Fan RPMs:\n{sb}\n");
+
+                    // Form On Top = fot
+                    using Form fot = new();
+                    fot.TopMost = true;
+
+                    // Скрываем окно от пользователя
+                    fot.StartPosition = FormStartPosition.Manual;
+                    fot.Location = new Point(-2000, -2000);
+
+                    fot.Show();
+                    fot.Focus();
+                    fot.BringToFront();
+
+                    MessageBox.Show(sb.ToString(), "Вентиляторы");
+
+                }
+                catch { }
+            }
+            else MessageBox.Show("Датчики оборотов вентиляторов не найдены!", "Вентиляторы");
+
+        });
     }
 
-    static void ParseCommandLineArgs(string[] args)
+    static bool IsProcessRunning(params string[] processNames)
     {
-        if (args.Length > 0)
+        var processes = Process.GetProcesses();
+        return processes.Any(p =>
         {
-            string mode = args[0].ToLower();
-            currentLoggingMode = mode switch
+            try
             {
-                "console" => LoggingMode.Console,
-                "file" => LoggingMode.File,
-                "both" => LoggingMode.Both,
-                _ => LoggingMode.File
-            };
-        }
+                return processNames.Any(name => p.ProcessName.Contains(name, StringComparison.OrdinalIgnoreCase));
+            }
+            catch
+            {
+                return false;
+            }
+        });
     }
 
     static void CreateLoggingModeMenu()
@@ -280,10 +161,8 @@ static partial class Program
         if (contextMenu == null) return;
 
         // Находим пункт "Режим логирования" | Found "Logging mode"
-        var loggingMenuItem = contextMenu.Items
-            .OfType<ToolStripMenuItem>()
-            // EN: .FirstOrDefault(item => item.Text == "Logging mode");
-            .FirstOrDefault(item => item.Text == "Режим логирования");
+        var loggingMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>().FirstOrDefault(item => item.Text == "Режим логирования");
+        // EN: .FirstOrDefault(item => item.Text == "Logging mode");
 
         if (loggingMenuItem == null) return;
 
@@ -325,8 +204,8 @@ static partial class Program
 
         // Если переключаемся на режим "В файл", закрываем консоль | Else switch to "In file", close the console
         else if (mode == LoggingMode.File && (oldMode == LoggingMode.Console || oldMode == LoggingMode.Both)) CloseConsole();
-        // EN: trayIcon.ShowBalloonTip(2000, "AutoTest", $"Logging mode changed to: {GetModeDescription(mode)}", ToolTipIcon.Info);
-        trayIcon.ShowBalloonTip(2000, "AutoTest", $"Режим логирования изменен на: {GetModeDescription(mode)}", ToolTipIcon.Info);
+        // EN: trayIcon.ShowBalloonTip(2000, "AutoTest", $"Logging mode changed: {GetModeDescription(mode)}", ToolTipIcon.Info);
+        trayIcon.ShowBalloonTip(2000, "AutoTest", $"Режим логирования изменен: {GetModeDescription(mode)}", ToolTipIcon.Info);
     }
 
     static void OpenConsole()
@@ -344,10 +223,8 @@ static partial class Program
                     Thread.Sleep(100);
                 }
             }
-            else
-            {
-                consoleAllocated = true;
-            }
+            else consoleAllocated = true;
+
         }
         catch (Exception ex)
         {
@@ -456,49 +333,7 @@ static partial class Program
         Application.Exit();
     }
 
-    static void ShowFanRpms(Computer c)
-    {
-        static void UpdateHardware(IHardware hardware)
-        {
-            hardware.Update();
-            StringBuilder sb = new();
-
-            foreach (var sensor in hardware.Sensors)
-            {
-                if (sensor.SensorType == SensorType.Fan && sensor.Value.HasValue && sensor.Value > 0)
-                {
-                    sb.AppendLine($"{sensor.Name}: {sensor.Value:F0} RPM");
-                }
-            }
-
-            foreach (var sub in hardware.SubHardware)
-            {
-                UpdateHardware(sub);
-            }
-
-            // Показываем все обороты для всех вертушек (CPU, GPU) | Show all RPMs for all fans (CPU, GPU)
-            if (sb.Length > 0)
-            {
-                try
-                {
-                    File.AppendAllText(logPath, $"[{DateTime.Now}] Fan RPMs:\n{sb}\n");
-                    MessageBox.Show(sb.ToString(), $"Вентиляторы");
-                    // EN: MessageBox.Show(sb.ToString(), $"Fans");
-                }
-                catch
-                { }
-            }
-        }
-
-        foreach (var hardware in c.Hardware)
-        {
-            UpdateHardware(hardware);
-        }
-    }
-
-
-
-    public static void ReportSystemInfo()
+    static void ReportSystemInfo()
     {
         try
         {
@@ -519,54 +354,69 @@ static partial class Program
             {
                 hardware.Update();
 
-                // CPU
                 if (hardware.HardwareType == HardwareType.Cpu)
                 {
+                    // Проверяем, является ли процессор AMD | Check if the processor is AMD
                     if (hardware.Name.Contains("AMD", StringComparison.OrdinalIgnoreCase))
+                    {
                         isAMDProcessor = true;
+                    }
 
                     foreach (var sensor in hardware.Sensors)
                     {
-                        if (sensor.Value is not float val || float.IsNaN(val)) continue;
-
-                        switch (sensor.SensorType)
+                        try
                         {
-                            case SensorType.Temperature:
-                                if (sensor.Name.Contains("CPU Package") || sensor.Name.Contains("Tctl") || sensor.Name.Contains("Tdie"))
-                                    cpuTemps.Add(val);
-                                break;
-                            case SensorType.Power:
-                                if (sensor.Name.Contains("CPU Package") || sensor.Name.Contains("Package"))
-                                    cpuPowers.Add(val);
-                                break;
-                            case SensorType.Clock:
-                                var clocks = hardware.Sensors
-                                    .Where(s => s.SensorType == SensorType.Clock && s.Name.Contains("Core"))
-                                    .Select(s => s.Value)
-                                    .Where(v => v.HasValue)
-                                    .Select(v => v!.Value)
-                                    .ToList();
-                                if (clocks.Count != 0)
-                                    cpuFrequencies.Add(clocks.Average());
-                                break;
+                            if (sensor.Value is not float val || float.IsNaN(val))
+                                continue;
+
+                            switch (sensor.SensorType)
+                            {
+                                case SensorType.Temperature:
+                                    if (sensor.Name.Contains("CPU Package") || sensor.Name.Contains("Tctl") || sensor.Name.Contains("Tdie"))
+                                        cpuTemps.Add(val);
+                                    break;
+
+                                case SensorType.Power:
+                                    if (sensor.Name.Contains("CPU Package") || sensor.Name.Contains("Package"))
+                                        cpuPowers.Add(val);
+                                    break;
+
+                                case SensorType.Clock:
+                                    List<ISensor> clockSensors = [.. hardware.Sensors.Where(s => s.SensorType == SensorType.Clock)];
+                                    List<float> coreClocks = [.. clockSensors.Where(s => s.Name.Contains("Core") && !s.Name.Contains("Bus")).Select(s => s.Value).Where(v => v.HasValue).Select(v => v!.Value)];
+                                    if (coreClocks.Count != 0)
+                                    {
+                                        float averageClock = coreClocks.Average();
+                                        cpuFrequencies.Add(averageClock);
+                                    }
+                                    break;
+                            }
                         }
+                        catch { }
                     }
                 }
-                // RAM
+
                 else if (hardware.HardwareType == HardwareType.Memory)
                 {
                     foreach (var sensor in hardware.Sensors)
                     {
-                        if (sensor.Value is not float val || float.IsNaN(val)) continue;
-                        string name = sensor.Name.ToLower();
-                        if (name.Contains("used")) memoryUsed = val;
-                        else if (name.Contains("available")) memoryAvailable = val;
+                        try
+                        {
+                            if (sensor.Value is not float val || float.IsNaN(val)) continue;
+
+                            if (sensor.SensorType == SensorType.Data)
+                            {
+                                string name = sensor.Name.ToLower();
+                                if (name.Contains("used")) memoryUsed = val;
+                                else if (name.Contains("available")) memoryAvailable = val;
+                            }
+
+                        }
+                        catch { }
+
                     }
                 }
-                // GPU
-                else if (hardware.HardwareType == HardwareType.GpuNvidia ||
-                         hardware.HardwareType == HardwareType.GpuAmd ||
-                         hardware.HardwareType == HardwareType.GpuIntel)
+                else if (hardware.HardwareType == HardwareType.GpuNvidia || hardware.HardwareType == HardwareType.GpuAmd || hardware.HardwareType == HardwareType.GpuIntel)
                 {
                     if (!legendWritten)
                     {
@@ -579,19 +429,25 @@ static partial class Program
 
                     foreach (var sensor in hardware.Sensors)
                     {
-                        if (sensor.Value is not float val || float.IsNaN(val)) continue;
-
-                        switch (sensor.SensorType)
+                        try
                         {
-                            case SensorType.Temperature:
-                                if (sensor.Name.Contains("GPU Hot Spot") || sensor.Name.Contains("GPU Core"))
-                                    gpuTempsWithNames.Add((currentGpuId, val + 6.7f)); // коррекция
-                                break;
-                            case SensorType.Power:
-                                if (sensor.Name.Contains("GPU Package") || sensor.Name.Contains("GPU Power") || sensor.Name.Contains("Total"))
-                                    gpuPowersWithNames.Add((currentGpuId, val));
-                                break;
+                            if (sensor.Value is not float val || float.IsNaN(val))
+                                continue;
+
+                            switch (sensor.SensorType)
+                            {
+                                case SensorType.Temperature:
+                                    if (sensor.Name.Contains("GPU Hot Spot") || sensor.Name.Contains("GPU Core"))
+                                        gpuTempsWithNames.Add((currentGpuId, val + (float)6.7)); // Корректировка погрешностей для GPU | Correction of errors for GPU
+                                    break;
+
+                                case SensorType.Power:
+                                    if (sensor.Name.Contains("GPU Package") || sensor.Name.Contains("GPU Power") || sensor.Name.Contains("Total"))
+                                        gpuPowersWithNames.Add((currentGpuId, val));
+                                    break;
+                            }
                         }
+                        catch { }
                     }
                     gpuIndex++;
                 }
@@ -602,63 +458,119 @@ static partial class Program
 
             if (!legendWritten && gpuLegend.Count != 0)
             {
-                List<string> legendEntries = [.. gpuLegend.Select(g => $"{g.id} ({(g.isIntegrated ? "встроенная" : g.fullName)}) - {g.fullName}")];
+                List<string> legendEntries = [];
+                foreach (var (id, fullName, isIntegrated) in gpuLegend)
+                {
+                    // EN: string description = isIntegrated ? "intergated" : fullName;
+                    string description = isIntegrated ? "встроенная" : fullName;
+                    legendEntries.Add($"{id} ({description}) - {fullName}");
+                }
+                // EN: logLines.Add("Designations: ");
                 logLines.Add("Обозначения: ");
                 logLines.Add(string.Join(Environment.NewLine, legendEntries));
                 logLines.Add("\n");
                 legendWritten = true;
             }
 
+
             float cpuTempValue = cpuTemps.Count != 0 ? cpuTemps.Average() : float.NaN;
             float cpuFreqValue = cpuFrequencies.Count != 0 ? cpuFrequencies.Average() : float.NaN;
 
-            if (isAMDProcessor && !float.IsNaN(cpuFreqValue))
-                cpuFreqValue += 1350; // корректировка AMD
 
-            // --- CPU лог ---
-            if (MonitoringManager.LogCpu && MonitoringManager.TargetProcessName != null)
+            // Корректировка погрешностей для процессоров AMD | Correction of errors for AMD processors
+            if (isAMDProcessor)
+            {
+                // Температура | Temperature
+                // if (!float.IsNaN(cpuTempValue)) cpuTempValue += 6;
+                // Частота | Frequency
+                if (!float.IsNaN(cpuFreqValue)) cpuFreqValue += 1350;
+            }
+
+            if (IsProcessRunning(CpuProcesses))
             {
                 int cpuIndex = 1;
                 foreach (var hw in c.Hardware.Where(h => h.HardwareType == HardwareType.Cpu))
                 {
                     hw.Update();
-                    var temps = hw.Sensors.Where(s => s.SensorType == SensorType.Temperature).Select(s => s.Value).Where(v => v.HasValue).Select(v => v!.Value).ToList();
-                    var powers = hw.Sensors.Where(s => s.SensorType == SensorType.Power).Select(s => s.Value).Where(v => v.HasValue).Select(v => v!.Value).ToList();
-                    var clocks = hw.Sensors.Where(s => s.SensorType == SensorType.Clock && s.Name.Contains("Core")).Select(s => s.Value).Where(v => v.HasValue).Select(v => v!.Value).ToList();
 
-                    float temp = temps.Count > 0 ? temps.Average() : float.NaN;
-                    float power = powers.Count > 0 ? powers.Average() : float.NaN;
-                    float freq = clocks.Count > 0 ? clocks.Average() : float.NaN;
+                    float temp = float.NaN;
+                    float power = float.NaN;
+                    float freq = float.NaN;
+
+                    // Temperature (priority: Package -> Tctl -> Tdie)
+                    var tempSensor = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature && s.Name.Contains("Package"))
+                                  ?? hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature && s.Name.Contains("Tctl"))
+                                  ?? hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature && s.Name.Contains("Tdie"));
+                    if (tempSensor?.Value is float tVal && !float.IsNaN(tVal))
+                        temp = tVal;
+
+                    // Power (priority: CPU Package -> Package)
+                    var powerSensor = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Power && s.Name.Contains("CPU Package"))
+                                   ?? hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Power && s.Name.Contains("Package"));
+                    if (powerSensor?.Value is float pVal && !float.IsNaN(pVal))
+                        power = pVal;
+
+                    // Clock (average of all Core sensors)
+                    var coreClocks = hw.Sensors
+                        .Where(s => s.SensorType == SensorType.Clock && s.Name.Contains("Core") && !s.Name.Contains("Bus"))
+                        .Select(s => s.Value)
+                        .Where(v => v.HasValue)
+                        .Select(v => v!.Value)
+                        .ToList();
+                    if (coreClocks.Count > 0)
+                        freq = coreClocks.Average();
 
                     string cpuLine = $"[{timestr}] CPU#{cpuIndex} | Temp: {FormatTempValue(temp),-7} | Power: {FormatPowerValue(power),-9} | Avg Freq: {FormatFreqValue(freq)}";
                     logLines.Add(cpuLine);
+
                     cpuIndex++;
                 }
             }
 
-            // RAM лог
-            if (MonitoringManager.LogRam && MonitoringManager.TargetProcessName != null && memoryUsed.HasValue && memoryAvailable.HasValue)
+            if (IsProcessRunning(RamProcesses))
             {
-                float totalMemory = memoryUsed.Value + memoryAvailable.Value;
-                float usedPercent = (memoryUsed.Value / totalMemory) * 100f;
-                float freePercent = 100f - usedPercent;
-                string ramLine = $"[{timestr}] RAM   | Used: {FormatRamValue(memoryUsed.Value)} ({usedPercent:F0}%) | Free: {FormatRamValue(memoryAvailable.Value)} ({freePercent:F0}%) | Total: {FormatRamValue(totalMemory)}";
-                logLines.Add(ramLine);
+                if (IsProcessRunning(RamProcesses))
+                {
+                    if (memoryUsed.HasValue && memoryAvailable.HasValue)
+                    {
+                        float totalMemory = memoryUsed.Value + memoryAvailable.Value;
+                        float usedPercent = (memoryUsed.Value / totalMemory) * 100f;
+                        float freePercent = 100f - usedPercent;
+                        string ramLine = $"[{timestr}] RAM   | Used: {FormatRamValue(memoryUsed.Value)} ({usedPercent:F0}%) | Free: {FormatRamValue(memoryAvailable.Value)} ({freePercent:F0}%) | Total: {FormatRamValue(totalMemory)}";
+                        logLines.Add(ramLine);
+                    }
+                }
             }
 
-            // GPU лог 
-            if (MonitoringManager.LogGpu && MonitoringManager.TargetProcessName != null)
+            if (IsProcessRunning(GpuProcesses))
             {
-                int logGpuIndex = 1;
-                foreach (var hw in c.Hardware.Where(h => h.HardwareType == HardwareType.GpuNvidia || h.HardwareType == HardwareType.GpuAmd || h.HardwareType == HardwareType.GpuIntel))
+                foreach (var hw in c.Hardware.Where(h =>
+                    h.HardwareType == HardwareType.GpuNvidia ||
+                    h.HardwareType == HardwareType.GpuAmd ||
+                    h.HardwareType == HardwareType.GpuIntel))
                 {
                     hw.Update();
-                    float temp = hw.Sensors.Where(s => s.SensorType == SensorType.Temperature).Select(s => s.Value).Where(v => v.HasValue).Select(v => v!.Value).DefaultIfEmpty(float.NaN).Average();
-                    float power = hw.Sensors.Where(s => s.SensorType == SensorType.Power).Select(s => s.Value).Where(v => v.HasValue).Select(v => v!.Value).DefaultIfEmpty(float.NaN).Average();
 
-                    string gpuLine = $"[{timestr}] GPU#{logGpuIndex} | Temp: {FormatTempValue(temp),-7} | Power: {FormatPowerValue(power),-9}";
+                    float temp = float.NaN;
+                    float power = float.NaN;
+
+                    // Temperature (priority: Hot Spot -> Core)
+                    var tempSensor = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature && s.Name.Contains("Hot Spot"))
+                                  ?? hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature && s.Name.Contains("Core"));
+                    if (tempSensor?.Value is float tVal && !float.IsNaN(tVal))
+                        temp = tVal;
+
+                    // Power (priority: Package -> GPU Power -> Total)
+                    var powerSensor = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Power && s.Name.Contains("Package"))
+                                   ?? hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Power && s.Name.Contains("GPU Power"))
+                                   ?? hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Power && s.Name.Contains("Total"));
+                    if (powerSensor?.Value is float pVal && !float.IsNaN(pVal))
+                        power = pVal;
+
+                    string gpuLine = $"[{timestr}] GPU#{gpuIndex} | Temp: {FormatTempValue(temp),-7} | Power: {FormatPowerValue(power),-9}";
                     logLines.Add(gpuLine);
-                    logGpuIndex++;
+
+                    gpuIndex++;
                 }
             }
 
@@ -666,22 +578,16 @@ static partial class Program
 
             string logEntry = string.Join(Environment.NewLine, logLines);
 
-            // Запись в файл выбранного процесса
-            if (MonitoringManager.TargetProcessName != null)
-                MonitoringManager.Log(logEntry);
-
-            // Запись в глобальный файл - temps.log
+            // Логируем в зависимости от выбранного режима | Logging depending on the selected mode
             LogOutput(logEntry);
         }
         catch (Exception ex)
         {
+            // EN: string errorLine = $"[{DateTime.Now}] Error in ReportSystemInfo: {ex}\n";
             string errorLine = $"[{DateTime.Now}] Ошибка в ReportSystemInfo: {ex}\n";
             LogOutput(errorLine, isError: true);
-            if (MonitoringManager.TargetProcessName != null)
-                MonitoringManager.Log(errorLine);
         }
     }
-
 
     static void LogOutput(string message, bool isError = false)
     {
